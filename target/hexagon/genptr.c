@@ -543,12 +543,14 @@ static void gen_write_p3_0(DisasContext *ctx, TCGv control_reg)
     }
 }
 
-/*
- * Certain control registers require special handling on write
- *     HEX_REG_P3_0_ALIASED  aliased to the predicate registers
- *                           -> break the value across 4 predicate registers
- *     HEX_REG_QEMU_*_CNT    changes in current TB in DisasContext
- *                            -> clear the changes
+/**
+ * gen_write_ctrl_reg() - Generate code to write a control register
+ * @ctx: Translation context for the packet that contains the write
+ * @reg_num: Index of the destination control register
+ * @val: TCG value to write. This function can change it.
+ *
+ * Bits that are read-only on the CPU revision keep their values.
+ * A write to C4 sets P0 to P3.
  */
 static inline void gen_write_ctrl_reg(DisasContext *ctx, int reg_num,
                                       TCGv val)
@@ -561,6 +563,12 @@ static inline void gen_write_ctrl_reg(DisasContext *ctx, int reg_num,
             ctx->hex_def->hex_version >= HEX_VER_V79) {
             /* USR.FPSAT is reserved before v79 */
             reg_mask &= ~fGET_REG_FIELD_MASK(USR_FPSAT);
+        }
+        if (reg_num == HEX_REG_USR &&
+            ctx->hex_def->hex_version >= HEX_VER_V85) {
+            /* V85 permits writes to NPC and FPCOPROC. */
+            reg_mask &= ~(fGET_REG_FIELD_MASK(USR_NPC) |
+                          fGET_REG_FIELD_MASK(USR_FPCOPROC));
         }
         gen_masked_reg_write(val, hex_gpr[reg_num], reg_mask);
         tcg_gen_mov_tl(get_result_gpr(ctx, reg_num), val);
