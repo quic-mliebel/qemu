@@ -754,26 +754,75 @@ static bool hexagon_cpu_translate_for_debug(CPUState *cs, vaddr addr,
 
 #define INVALID_BADVA 0xbadabada
 
-static void set_badva_regs(CPUHexagonState *env, uint32_t VA, int slot,
-                           MMUAccessType access_type)
-{
-    env->t_sreg[HEX_SREG_BADVA] = VA;
+/**
+ * struct HexagonFaultAddressInfo - Fault addresses and slots to report
+ * @va: Guest virtual address of each slot. Use only the slots in @valid.
+ * @valid: Bit mask of slots that have an address to report
+ * @slot: Slot that caused the fault
+ */
+typedef struct HexagonFaultAddressInfo {
+    vaddr va[2];
+    uint32_t valid;
+    unsigned slot;
+} HexagonFaultAddressInfo;
 
-    if (access_type == MMU_INST_FETCH || slot == 0) {
-        env->t_sreg[HEX_SREG_BADVA0] = VA;
-        env->t_sreg[HEX_SREG_BADVA1] = INVALID_BADVA;
-        SET_SSR_FIELD(env, SSR_V0, 1);
-        SET_SSR_FIELD(env, SSR_V1, 0);
-        SET_SSR_FIELD(env, SSR_BVS, 0);
-    } else if (slot == 1) {
-        env->t_sreg[HEX_SREG_BADVA0] = INVALID_BADVA;
-        env->t_sreg[HEX_SREG_BADVA1] = VA;
-        SET_SSR_FIELD(env, SSR_V0, 0);
-        SET_SSR_FIELD(env, SSR_V1, 1);
-        SET_SSR_FIELD(env, SSR_BVS, 1);
-    } else {
-        g_assert_not_reached();
+/**
+ * get_fault_address_info() - Get the addresses to report for a memory fault
+ * @env: CPU state of the packet that caused the fault
+ * @va: Guest virtual address of the access that caused the fault
+ * @slot: Memory slot of a data access. Not used for an instruction fetch.
+ * @access_type: Instruction fetch, data load, or data store
+ *
+ * A data fault reports the addresses of all memory slots in the packet.
+ * A fetch fault reports only @va.
+ *
+ * Return: The addresses, the valid slots, and the slot that caused the fault.
+ */
+static HexagonFaultAddressInfo get_fault_address_info(
+    const CPUHexagonState *env, vaddr va, unsigned slot,
+    MMUAccessType access_type)
+{
+    HexagonFaultAddressInfo info = {
+        .va = { va, va },
+        .valid = 1,
+        .slot = 0,
+    };
+
+    if (access_type != MMU_INST_FETCH) {
+        assert(slot < 2);
+        info.valid = env->mem_access_valid | (1U << slot);
+        info.slot = slot;
+        for (int i = 0; i < 2; i++) {
+            if (i != slot && (env->mem_access_valid & (1U << i))) {
+                info.va[i] = env->mem_access_va[i];
+            }
+        }
     }
+
+    return info;
+}
+
+/**
+ * set_badva_regs() - Write the fault addresses to BADVA and SSR
+ * @env: CPU state that gets the fault registers
+ * @info: Addresses, valid slots, and the slot that caused the fault
+ *
+ * Invalidate BADVA0 or BADVA1 when its slot is not valid.
+ */
+static void set_badva_regs(CPUHexagonState *env,
+                           const HexagonFaultAddressInfo *info)
+{
+    for (int i = 0; i < 2; i++) {
+        if (info->valid & (1U << i)) {
+            env->t_sreg[HEX_SREG_BADVA0 + i] = info->va[i];
+        } else {
+            env->t_sreg[HEX_SREG_BADVA0 + i] = INVALID_BADVA;
+        }
+    }
+    env->t_sreg[HEX_SREG_BADVA] = info->va[info->slot];
+    SET_SSR_FIELD(env, SSR_V0, info->valid & 1);
+    SET_SSR_FIELD(env, SSR_V1, (info->valid >> 1) & 1);
+    SET_SSR_FIELD(env, SSR_BVS, info->slot);
 }
 
 /**
@@ -790,8 +839,10 @@ static void raise_tlbmiss_exception(CPUState *cs, uint32_t VA, int slot,
                                     MMUAccessType access_type)
 {
     CPUHexagonState *env = cpu_env(cs);
+    HexagonFaultAddressInfo info =
+        get_fault_address_info(env, VA, slot, access_type);
 
-    set_badva_regs(env, VA, slot, access_type);
+    set_badva_regs(env, &info);
 
     switch (access_type) {
     case MMU_INST_FETCH:
@@ -814,23 +865,46 @@ static void raise_tlbmiss_exception(CPUState *cs, uint32_t VA, int slot,
     }
 }
 
+/**
+ * raise_perm_exception() - Prepare a memory permission exception
+ * @cs: CPU that gets the exception
+ * @VA: Guest virtual address of the access that is not permitted
+ * @slot: Memory slot of a data access. Not used for an instruction fetch.
+ * @access_type: Instruction fetch, data load, or data store
+ * @excp: Exception for the access
+ *
+ * This does not raise the exception.
+ */
 static void raise_perm_exception(CPUState *cs, uint32_t VA, int slot,
                                  MMUAccessType access_type, int32_t excp)
 {
     CPUHexagonState *env = cpu_env(cs);
+    HexagonFaultAddressInfo info =
+        get_fault_address_info(env, VA, slot, access_type);
 
-    set_badva_regs(env, VA, slot, access_type);
+    set_badva_regs(env, &info);
     cs->exception_index = excp;
 }
 
+/**
+ * raise_misaligned_exception() - Prepare a data alignment exception
+ * @cs: CPU that gets the exception
+ * @VA: Guest virtual address of the misaligned access
+ * @slot: Memory slot of the access
+ * @access_type: Data load or data store
+ *
+ * This does not raise the exception.
+ */
 static void raise_misaligned_exception(CPUState *cs, uint32_t VA, int slot,
                                        MMUAccessType access_type)
 {
     CPUHexagonState *env = cpu_env(cs);
+    HexagonFaultAddressInfo info =
+        get_fault_address_info(env, VA, slot, access_type);
     int32_t excp = (access_type == MMU_DATA_STORE) ?
-                   HEX_CAUSE_MISALIGNED_STORE : HEX_CAUSE_MISALIGNED_LOAD;
+                    HEX_CAUSE_MISALIGNED_STORE : HEX_CAUSE_MISALIGNED_LOAD;
 
-    set_badva_regs(env, VA, slot, access_type);
+    set_badva_regs(env, &info);
     cs->exception_index = HEX_EVENT_PRECISE;
     env->cause_code = excp;
 }

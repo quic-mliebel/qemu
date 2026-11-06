@@ -154,11 +154,74 @@ def gen_tcg_func(f, tag, regs, imms):
     f.write("}\n\n")
 
 
+def gen_memory_address(f, tag, regs, imms):
+    """Write a C function that generates scalar address recording for faults.
+
+    Args:
+        f: Output stream for generated C code.
+        tag: Instruction identifier.
+        regs: Instruction register operands.
+        imms: Instruction immediate operands.
+
+    Write nothing for an instruction whose address calculation is unsupported.
+    """
+    info = hex_common.packet_memory_info(tag)
+    if info is None:
+        return
+    ea, pred, width = info
+    for reg in ("SP", "FP", "GP", "LR"):
+        ea = ea.replace(f"fREAD_{reg}()", f"hex_gpr[HEX_REG_{reg}]")
+    f.write("#ifndef CONFIG_USER_ONLY\n")
+    f.write("/**\n")
+    f.write(f" * address_{tag}() - Generate code to record a scalar address\n")
+    f.write(" * @ctx: Translation context containing the memory instruction\n")
+    f.write(" *\n")
+    f.write(" * Save active accesses' addresses for packet fault reporting.\n")
+    f.write(" * No memory access or address-register update is performed.\n")
+    f.write(" */\n")
+    f.write(f"static void address_{tag}(DisasContext *ctx)\n{{\n")
+    f.write("    Insn *insn G_GNUC_UNUSED = ctx->insn;\n")
+    f.write("    TCGv EA = tcg_temp_new();\n")
+    for i, (regtype, regid) in enumerate(regs):
+        name = f"{regtype}{regid}V"
+        if regtype == "R" and re.search(rf"\b{name}\b", ea):
+            f.write(f"    TCGv {name} = hex_gpr[insn->regno[{i}]];\n")
+    for immlett, bits, shift in imms:
+        name = hex_common.imm_name(immlett)
+        if re.search(rf"\b{name}\b", ea):
+            i = 1 if immlett.isupper() else 0
+            f.write(f"    int {name} = insn->immed[{i}];\n")
+    if pred:
+        name = pred.group(3)
+        i = next(i for i, (t, r) in enumerate(regs)
+                 if f"{t}{r}" == name[:-1])
+        source = "ctx->new_pred_value" if pred.group(1) == "NEW" else "hex_pred"
+        f.write("    TCGv LSB = tcg_temp_new();\n")
+        f.write("    TCGLabel *skip = gen_new_label();\n")
+        f.write(f"    tcg_gen_andi_tl(LSB, {source}[insn->regno[{i}]], 1);\n")
+        cond = "NE" if pred.group(2) else "EQ"
+        f.write(f"    tcg_gen_brcondi_tl(TCG_COND_{cond}, LSB, 0, skip);\n")
+    f.write(f"    {ea};\n")
+    f.write("    gen_log_mem_address(ctx, EA);\n")
+    if pred:
+        f.write("    gen_set_label(skip);\n")
+    f.write("}\n#endif\n\n")
+
+
 def gen_def_tcg_func(f, tag, tagregs, tagimms):
+    """Write C functions to translate an instruction and record its address.
+
+    Args:
+        f: Output stream for generated C code.
+        tag: Instruction identifier.
+        tagregs: Register operands indexed by instruction identifier.
+        tagimms: Immediate operands indexed by instruction identifier.
+    """
     regs = tagregs[tag]
     imms = tagimms[tag]
 
     gen_tcg_func(f, tag, regs, imms)
+    gen_memory_address(f, tag, regs, imms)
 
 
 def main():

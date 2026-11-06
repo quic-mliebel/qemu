@@ -835,6 +835,7 @@ static void gen_start_packet(DisasContext *ctx)
      * gen phase, so clear it again.
      */
     bitmap_zero(ctx->pregs_written, NUM_PREGS);
+    ctx->mem_addresses_generated = false;
 #ifndef CONFIG_USER_ONLY
     for (i = 0; i < HEX_SREG_GLB_START; i++) {
         ctx->t_sreg_new_value[i] = NULL;
@@ -1036,12 +1037,34 @@ static void mark_store_width(DisasContext *ctx)
     }
 }
 
+/**
+ * gen_insn() - Generate code for the current instruction
+ * @ctx: Translation context for the instruction and its packet
+ *
+ * A memory fault reports the addresses of all scalar accesses in the packet.
+ */
 static void gen_insn(DisasContext *ctx)
 {
     uint16_t opcode = ctx->insn->opcode;
 
 #ifndef CONFIG_USER_ONLY
     if (GET_ATTRIB(opcode, A_LOAD) || GET_ATTRIB(opcode, A_STORE)) {
+        if (!ctx->mem_addresses_generated) {
+            /* Record scalar addresses before any memory access can fault. */
+            Insn *saved = ctx->insn;
+
+            tcg_gen_st_i32(tcg_constant_i32(0), tcg_env,
+                           offsetof(CPUHexagonState, mem_access_valid));
+            for (int i = 0; i < ctx->pkt.num_insns; i++) {
+                Insn *in = &ctx->pkt.insn[i];
+                if (opcode_address[in->opcode]) {
+                    ctx->insn = in;
+                    opcode_address[in->opcode](ctx);
+                }
+            }
+            ctx->insn = saved;
+            ctx->mem_addresses_generated = true;
+        }
         tcg_gen_st_i32(tcg_constant_i32(ctx->insn->slot), tcg_env,
                        offsetof(CPUHexagonState, mem_slot));
     }

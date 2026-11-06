@@ -1751,6 +1751,39 @@ static void vec_to_qvec(size_t size, TCGv_ptr dstbase, intptr_t dstoff,
     }
 }
 
+#ifndef CONFIG_USER_ONLY
+/**
+ * gen_log_mem_address() - Generate code to record a scalar access address
+ * @ctx: Translation context for the instruction that does the access
+ * @va: TCG value that contains the guest virtual address of the access
+ *
+ * A fault in the packet can then report this address. This does not do
+ * the access.
+ */
+void gen_log_mem_address(DisasContext *ctx, TCGv_i32 va)
+{
+    unsigned slot = ctx->insn->slot;
+    TCGv valid = tcg_temp_new();
+
+    tcg_debug_assert(slot < 2);
+    if (sizeof(vaddr) == sizeof(uint64_t)) {
+        TCGv_i64 va64 = tcg_temp_new_i64();
+
+        tcg_gen_extu_i32_i64(va64, va);
+        tcg_gen_st_i64(va64, tcg_env,
+                       offsetof(CPUHexagonState, mem_access_va[slot]));
+    } else {
+        tcg_gen_st_i32(va, tcg_env,
+                       offsetof(CPUHexagonState, mem_access_va[slot]));
+    }
+    tcg_gen_ld_i32(valid, tcg_env,
+                   offsetof(CPUHexagonState, mem_access_valid));
+    tcg_gen_ori_i32(valid, valid, 1U << slot);
+    tcg_gen_st_i32(valid, tcg_env,
+                   offsetof(CPUHexagonState, mem_access_valid));
+}
+#endif
+
 void probe_noshuf_load(TCGv va, int s, int mi)
 {
     TCGv size = tcg_constant_tl(s);
