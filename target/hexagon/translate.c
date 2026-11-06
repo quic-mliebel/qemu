@@ -484,16 +484,27 @@ static bool need_pc_preload(DisasContext *ctx)
     return false;
 }
 
-/*
- * The opcode_analyze functions mark most of the writes in a packet
- * However, there are some implicit writes marked as attributes
- * of the applicable instructions.
+/**
+ * mark_implicit_reg_write() - Record an instruction's implicit register write
+ * @ctx: Packet analysis context containing the current instruction
+ * @attrib: Instruction attribute that indicates a write to @rnum
+ * @rnum: Index of the register written without an explicit destination operand
+ *
+ * If the instruction has @attrib, record the write in the packet analysis.
+ * Record it as predicated if the write can be cancelled: the instruction is
+ * conditional, it is an endloop write to LC0 or LC1, or it is an LR write in
+ * a packet with more than one branch. A predicated write keeps the old
+ * register value when it does not occur. This does not write guest registers.
  */
 static void mark_implicit_reg_write(DisasContext *ctx, int attrib, int rnum)
 {
     uint16_t opcode = ctx->insn->opcode;
     if (GET_ATTRIB(opcode, attrib)) {
         bool is_predicated = GET_ATTRIB(opcode, A_CONDEXEC);
+
+        if (rnum == HEX_REG_LR && ctx->pkt.pkt_has_multi_cof) {
+            is_predicated = true;
+        }
 
         /* LC0/LC1 is conditionally written by endloop instructions */
         if ((rnum == HEX_REG_LC0 || rnum == HEX_REG_LC1) &&

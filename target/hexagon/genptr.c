@@ -1057,30 +1057,65 @@ static void gen_jumpr(DisasContext *ctx, TCGv new_pc)
     gen_write_new_pc_addr(ctx, new_pc, TCG_COND_ALWAYS, NULL);
 }
 
+/**
+ * gen_call() - Generate code for a direct call
+ * @ctx: Translation context for the packet that contains the call
+ * @pc_off: Target offset in bytes from the start of the packet
+ *
+ * Set PC to the target and LR to the address of the next packet.
+ * If an earlier branch in the packet is taken, PC and LR do not change.
+ */
 static void gen_call(DisasContext *ctx, int pc_off)
 {
     TCGv lr = get_result_gpr(ctx, HEX_REG_LR);
+    TCGLabel *skip = gen_new_label();
+    if (ctx->pkt.pkt_has_multi_cof) {
+        tcg_gen_brcondi_tl(TCG_COND_NE, ctx->branch_taken, 0, skip);
+    }
     tcg_gen_movi_tl(lr, ctx->next_PC);
     gen_write_new_pc_pcrel(ctx, pc_off, TCG_COND_ALWAYS, NULL);
+    gen_set_label(skip);
 }
 
+/**
+ * gen_callr() - Generate code for an indirect call
+ * @ctx: Translation context for the packet that contains the call
+ * @new_pc: TCG value that contains the target guest virtual address
+ *
+ * Set PC to the target and LR to the address of the next packet.
+ * If an earlier branch in the packet is taken, PC and LR do not change.
+ * If @new_pc is LR, the target is the value of LR before the call.
+ */
 static void gen_callr(DisasContext *ctx, TCGv new_pc)
 {
     TCGv lr = get_result_gpr(ctx, HEX_REG_LR);
+    TCGLabel *skip = gen_new_label();
 
     new_pc = gen_unalias_gpr_src(new_pc, lr);
+    if (ctx->pkt.pkt_has_multi_cof) {
+        tcg_gen_brcondi_tl(TCG_COND_NE, ctx->branch_taken, 0, skip);
+    }
     tcg_gen_movi_tl(lr, ctx->next_PC);
     gen_write_new_pc_addr(ctx, new_pc, TCG_COND_ALWAYS, NULL);
+    gen_set_label(skip);
 }
 
+/**
+ * gen_cond_call() - Generate code for a conditional direct call
+ * @ctx: Translation context for the packet that contains the call
+ * @pred: TCG value that contains the predicate of the call
+ * @cond: Condition that cancels the call when (@pred @cond 1) is true
+ * @pc_off: Target offset in bytes from the start of the packet
+ *
+ * Do the same operation as gen_call() if the predicate does not cancel
+ * the call. Otherwise, PC and LR do not change.
+ */
 static void gen_cond_call(DisasContext *ctx, TCGv pred,
                           TCGCond cond, int pc_off)
 {
-    TCGv lr = get_result_gpr(ctx, HEX_REG_LR);
     TCGLabel *skip = gen_new_label();
-    gen_write_new_pc_pcrel(ctx, pc_off, cond, pred);
     tcg_gen_brcondi_tl(cond, pred, 1, skip);
-    tcg_gen_movi_tl(lr, ctx->next_PC);
+    gen_call(ctx, pc_off);
     gen_set_label(skip);
 }
 
