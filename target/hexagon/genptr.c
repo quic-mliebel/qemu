@@ -24,6 +24,7 @@
 #include "tcg/tcg-op-gvec.h"
 #include "exec/helper-gen.h"
 #include "insn.h"
+#include "attribs.h"
 #include "opcodes.h"
 #include "sys_macros.h"
 #include "translate.h"
@@ -1756,16 +1757,23 @@ static void vec_to_qvec(size_t size, TCGv_ptr dstbase, intptr_t dstoff,
  * gen_log_mem_address() - Generate code to record a scalar access address
  * @ctx: Translation context for the instruction that does the access
  * @va: TCG value that contains the guest virtual address of the access
+ * @width: Access size in bytes
  *
- * A fault in the packet can then report this address. This does not do
- * the access.
+ * A fault in the packet can then report this address, and the alignment
+ * check of the packet can include this access. This does not do the access.
  */
-void gen_log_mem_address(DisasContext *ctx, TCGv_i32 va)
+void gen_log_mem_address(DisasContext *ctx, TCGv_i32 va, unsigned width)
 {
     unsigned slot = ctx->insn->slot;
+    unsigned info = width;
     TCGv valid = tcg_temp_new();
 
     tcg_debug_assert(slot < 2);
+    if (GET_ATTRIB(ctx->insn->opcode, A_STORE)) {
+        info |= HEX_SCALAR_MEM_STORE;
+    }
+    ctx->scalar_mem_info |= info << (slot * HEX_SCALAR_MEM_ACCESS_BITS);
+    tcg_set_insn_start_param(ctx->base.insn_start, 1, ctx->scalar_mem_info);
     if (sizeof(vaddr) == sizeof(uint64_t)) {
         TCGv_i64 va64 = tcg_temp_new_i64();
 
@@ -1782,6 +1790,7 @@ void gen_log_mem_address(DisasContext *ctx, TCGv_i32 va)
     tcg_gen_st_i32(valid, tcg_env,
                    offsetof(CPUHexagonState, mem_access_valid));
 }
+
 #endif
 
 void probe_noshuf_load(TCGv va, int s, int mi)

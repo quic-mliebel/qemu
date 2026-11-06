@@ -30,6 +30,7 @@
 #include "tcg/tcg.h"
 #include "exec/gdbstub.h"
 #include "accel/tcg/cpu-ops.h"
+#include "accel/tcg/cpu-loop.h"
 #include "cpu_helper.h"
 #include "hex_mmu.h"
 
@@ -905,12 +906,86 @@ static void raise_misaligned_exception(CPUState *cs, uint32_t VA, int slot,
     env->cause_code = excp;
 }
 
+/**
+ * check_packet_alignment() - Check the alignment of the packet scalar accesses
+ * @env: CPU state of the packet
+ * @retaddr: Host return address to restore the guest state on a fault
+ *
+ * If a scalar access of the packet is misaligned, raise an alignment
+ * exception for it. Slot 1 has priority over slot 0. Otherwise, return.
+ */
+static void check_packet_alignment(CPUHexagonState *env, uintptr_t retaddr)
+{
+    CPUState *cs = env_cpu(env);
+    uint64_t data[INSN_START_WORDS];
+
+    if (!env->mem_access_valid || !retaddr ||
+        !cpu_unwind_state_data(cs, retaddr, data)) {
+        return;
+    }
+
+    for (int slot = 1; slot >= 0; slot--) {
+        unsigned info = data[1] >> (slot * HEX_SCALAR_MEM_ACCESS_BITS);
+        unsigned width = info & HEX_SCALAR_MEM_SIZE_MASK;
+        uint32_t va = env->mem_access_va[slot];
+
+        if ((env->mem_access_valid & (1U << slot)) && width &&
+            (va & (width - 1))) {
+            raise_misaligned_exception(cs, va, slot,
+                                      info & HEX_SCALAR_MEM_STORE ?
+                                      MMU_DATA_STORE : MMU_DATA_LOAD);
+            do_raise_exception(env, cs->exception_index, data[0], retaddr);
+        }
+    }
+}
+
+/**
+ * hexagon_check_alignment() - Check a data access for natural alignment
+ * @env: CPU state of the packet
+ * @va: Guest virtual address of the access
+ * @size: Access size in bytes. It must be a power of two.
+ * @slot: Memory slot of the access
+ * @access_type: Data load or data store
+ * @retaddr: Host return address to restore the guest state on a fault
+ *
+ * If @va is not a multiple of @size, raise an alignment exception. A
+ * misaligned slot 1 access of the packet has priority. Otherwise, return.
+ */
+void hexagon_check_alignment(CPUHexagonState *env, uint32_t va,
+                             unsigned size, int slot,
+                             MMUAccessType access_type, uintptr_t retaddr)
+{
+    if (va & (size - 1)) {
+        CPUState *cs = env_cpu(env);
+        check_packet_alignment(env, retaddr);
+        raise_misaligned_exception(cs, va, slot, access_type);
+        do_raise_exception(env, cs->exception_index, env->gpr[HEX_REG_PC],
+                           retaddr);
+    }
+}
+
 static const char *access_type_names[] = { "MMU_DATA_LOAD ", "MMU_DATA_STORE",
                                            "MMU_INST_FETCH" };
 
 static const char *mmu_idx_names[] = { "MMU_USER_IDX", "MMU_GUEST_IDX",
                                        "MMU_KERNEL_IDX" };
 
+/**
+ * hexagon_tlb_fill() - Fill the QEMU TLB for a guest memory access
+ * @cs: CPU that does the access
+ * @address: Guest virtual address to translate
+ * @size: Access size in bytes
+ * @access_type: Instruction fetch, data load, or data store
+ * @mmu_idx: MMU index for the privilege level of the access
+ * @probe: True to return false instead of raising an exception
+ * @retaddr: Host return address to restore the guest state on a fault
+ *
+ * If the translation fails and @probe is false, raise an exception. For a
+ * data access, a misaligned access of the packet has priority over a TLB
+ * miss or permission fault.
+ *
+ * Return: True on success. False if the translation fails and @probe is true.
+ */
 static bool hexagon_tlb_fill(CPUState *cs, vaddr address, int size,
                              MMUAccessType access_type, int mmu_idx, bool probe,
                              uintptr_t retaddr)
@@ -940,12 +1015,18 @@ static bool hexagon_tlb_fill(CPUState *cs, vaddr address, int size,
         if (probe) {
             return false;
         }
+        if (access_type != MMU_INST_FETCH) {
+            check_packet_alignment(env, retaddr);
+        }
         raise_perm_exception(cs, address, slot, access_type, excp);
         do_raise_exception(env, cs->exception_index, env->gpr[HEX_REG_PC],
                            retaddr);
     }
     if (probe) {
         return false;
+    }
+    if (access_type != MMU_INST_FETCH) {
+        check_packet_alignment(env, retaddr);
     }
     raise_tlbmiss_exception(cs, address, slot, access_type);
     do_raise_exception(env, cs->exception_index, env->gpr[HEX_REG_PC], retaddr);
@@ -991,6 +1072,17 @@ static vaddr hexagon_pointer_wrap(CPUState *cs, int mmu_idx,
     return result;
 }
 
+/**
+ * hexagon_cpu_do_unaligned_access() - Raise a data alignment exception
+ * @cs: CPU that does the misaligned access
+ * @addr: Guest virtual address of the misaligned access
+ * @access_type: Data load or data store
+ * @mmu_idx: MMU index of the access. Not used.
+ * @retaddr: Host return address to restore the guest state on a fault
+ *
+ * A misaligned slot 1 access of the packet has priority. This function does
+ * not return.
+ */
 static G_NORETURN
 void hexagon_cpu_do_unaligned_access(CPUState *cs, vaddr addr,
                                      MMUAccessType access_type, int mmu_idx,
@@ -998,6 +1090,7 @@ void hexagon_cpu_do_unaligned_access(CPUState *cs, vaddr addr,
 {
     CPUHexagonState *env = cpu_env(cs);
 
+    check_packet_alignment(env, retaddr);
     raise_misaligned_exception(cs, addr, env->mem_slot, access_type);
     do_raise_exception(env, cs->exception_index, env->gpr[HEX_REG_PC],
                        retaddr);

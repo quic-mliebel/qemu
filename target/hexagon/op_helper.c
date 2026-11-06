@@ -457,8 +457,9 @@ static void probe_store(CPUHexagonState *env, int slot, int mmu_idx,
  * @size: Load size in bytes
  * @mmu_idx: MMU index for the privilege level of the accesses
  *
- * Raise an exception if the slot 1 store or the load is not permitted.
- * A slot 1 fault has priority. This does not do the load or write the store.
+ * Raise an exception if the slot 1 store or the load is misaligned or not
+ * permitted. A slot 1 fault has priority. This does not do the load or write
+ * the store.
  */
 void HELPER(probe_noshuf_load)(CPUHexagonState *env, target_ulong va,
                                int size, int mmu_idx)
@@ -472,6 +473,7 @@ void HELPER(probe_noshuf_load)(CPUHexagonState *env, target_ulong va,
                     env->mem_log_stores[1].width, mmu_idx, retaddr);
     }
     env->mem_slot = 0;
+    hexagon_check_alignment(env, va, size, 0, MMU_DATA_LOAD, retaddr);
 #endif
     probe_read(env, va, size, mmu_idx, retaddr);
 }
@@ -583,6 +585,7 @@ static void check_noshuf(CPUHexagonState *env, bool pkt_has_scalar_store_s1,
 #ifndef CONFIG_USER_ONLY
         probe_store(env, 1, MMU_USER_IDX, false, ra);
         env->mem_slot = 0;
+        hexagon_check_alignment(env, vaddr, size, 0, MMU_DATA_LOAD, ra);
 #endif
         probe_read(env, vaddr, size, MMU_USER_IDX, ra);
         commit_store(env, 1, ra);
