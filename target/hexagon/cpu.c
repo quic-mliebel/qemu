@@ -752,8 +752,6 @@ static bool hexagon_cpu_translate_for_debug(CPUState *cs, vaddr addr,
 }
 
 
-#define INVALID_BADVA 0xbadabada
-
 /**
  * struct HexagonFaultAddressInfo - Fault addresses and slots to report
  * @va: Guest virtual address of each slot. Use only the slots in @valid.
@@ -807,7 +805,7 @@ static HexagonFaultAddressInfo get_fault_address_info(
  * @env: CPU state that gets the fault registers
  * @info: Addresses, valid slots, and the slot that caused the fault
  *
- * Invalidate BADVA0 or BADVA1 when its slot is not valid.
+ * Preserve BADVA0 or BADVA1 when its slot is not valid.
  */
 static void set_badva_regs(CPUHexagonState *env,
                            const HexagonFaultAddressInfo *info)
@@ -815,8 +813,6 @@ static void set_badva_regs(CPUHexagonState *env,
     for (int i = 0; i < 2; i++) {
         if (info->valid & (1U << i)) {
             env->t_sreg[HEX_SREG_BADVA0 + i] = info->va[i];
-        } else {
-            env->t_sreg[HEX_SREG_BADVA0 + i] = INVALID_BADVA;
         }
     }
     env->t_sreg[HEX_SREG_BADVA] = info->va[info->slot];
