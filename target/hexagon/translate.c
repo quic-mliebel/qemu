@@ -149,6 +149,27 @@ void gen_precise_exception(int cause, uint32_t PC)
                                tcg_constant_i32(PC));
 }
 
+#ifndef CONFIG_USER_ONLY
+/**
+ * gen_hmx_check_address() - Generate code to check an HMX operand address
+ * @ctx: Translation context for the packet that contains the operand
+ * @address: TCG value that contains an HMX activation or weight address
+ *
+ * If @address is not in VTCM, raise a coprocessor load/store exception.
+ */
+static void gen_hmx_check_address(DisasContext *ctx, TCGv_i32 address)
+{
+    TCGv_i64 offset = tcg_temp_new_i64();
+    TCGLabel *valid = gen_new_label();
+
+    tcg_gen_extu_i32_i64(offset, address);
+    tcg_gen_subi_i64(offset, offset, ctx->vtcm_base);
+    tcg_gen_brcondi_i64(TCG_COND_LTU, offset, ctx->vtcm_size_bytes, valid);
+    gen_precise_exception(HEX_CAUSE_COPROC_LDST, ctx->pkt.pc);
+    gen_set_label(valid);
+}
+#endif
+
 static void gen_exec_counters(DisasContext *ctx)
 {
     tcg_gen_addi_tl(hex_gpr[HEX_REG_QEMU_PKT_CNT],
@@ -798,6 +819,13 @@ static bool pkt_has_hlx_store(Packet *pkt)
     return false;
 }
 
+/**
+ * gen_start_packet() - Generate code to prepare the execution of a packet
+ * @ctx: Translation context for the packet
+ *
+ * If a coprocessor that the packet uses is not enabled, or an HMX operand
+ * address is not in VTCM, raise an exception before an instruction executes.
+ */
 static void gen_start_packet(DisasContext *ctx)
 {
     int i;
@@ -952,6 +980,16 @@ static void gen_start_packet(DisasContext *ctx)
         !ctx->hmx_check_emitted) {
         gen_precise_exception(HEX_CAUSE_NO_COPROC2_ENABLE, ctx->pkt.pc);
         ctx->hmx_check_emitted = true;
+    }
+    if (ctx->pkt.pkt_has_hmx) {
+        for (i = 0; i < ctx->pkt.num_insns; i++) {
+            Insn *insn = &ctx->pkt.insn[i];
+            if (GET_ATTRIB(insn->opcode, A_HMX) &&
+                (GET_ATTRIB(insn->opcode, A_PAIR_1OF2) ||
+                 GET_ATTRIB(insn->opcode, A_PAIR_2OF2))) {
+                gen_hmx_check_address(ctx, hex_gpr[insn->regno[0]]);
+            }
+        }
     }
 #endif
 }
@@ -1590,6 +1628,8 @@ static void hexagon_tr_init_disas_context(DisasContextBase *dcbase,
     ctx->hlx_coproc_enabled = hex_cpu->hlx != NULL &&
                               hex_cpu->hlx->contexts_bitmap != 0;
     ctx->hlx_check_emitted = false;
+    ctx->vtcm_base = hex_cpu->vtcm_base;
+    ctx->vtcm_size_bytes = hex_cpu->vtcm_size_bytes;
 #endif
     ctx->branch_cond = TCG_COND_NEVER;
     ctx->is_tight_loop = FIELD_EX32(hex_flags, TB_FLAGS, IS_TIGHT_LOOP);

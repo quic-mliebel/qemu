@@ -158,6 +158,14 @@ static DeviceState *cluster_create(HexagonCommonMachineState *hms)
     return cluster;
 }
 
+/**
+ * hex_subsys_create() - Create the shared memory and devices of a subsystem
+ * @hms: Machine state that gets the subsystem resources
+ * @m_cfg: Memory map and configuration table of the subsystem
+ * @rev: DSP revision for the subsystem devices
+ *
+ * This does not create CPUs.
+ */
 void hex_subsys_create(HexagonCommonMachineState *hms,
                        const struct hexagon_machine_config *m_cfg, Rev_t rev)
 {
@@ -181,6 +189,8 @@ void hex_subsys_create(HexagonCommonMachineState *hms,
                            sizeof(m_cfg->cfgtable), m_cfg->cfgbase,
                            &address_space_memory);
 
+    hms->vtcm_base = (hwaddr)m_cfg->cfgtable.vtcm_base << 16;
+    hms->vtcm_size_bytes = (hwaddr)m_cfg->cfgtable.vtcm_size_kb << 10;
     if (m_cfg->cfgtable.vtcm_size_kb > 0) {
         memory_region_init_ram(&hms->vtcm, NULL, "vtcm.ram",
                                m_cfg->cfgtable.vtcm_size_kb * 1024,
@@ -199,11 +209,20 @@ void hex_subsys_create(HexagonCommonMachineState *hms,
     hmx_context_create(hms, m_cfg);
 }
 
+/**
+ * hex_subsys_add_cpu() - Connect a CPU to the resources of its subsystem
+ * @hms: Subsystem that contains the shared resources
+ * @cpu: CPU to connect. It must not be realized.
+ *
+ * This does not realize @cpu.
+ */
 void hex_subsys_add_cpu(HexagonCommonMachineState *hms, DeviceState *cpu)
 {
     Object *hmx;
 
     object_property_add_child(OBJECT(hms->cluster), "cpu[*]", OBJECT(cpu));
+    qdev_prop_set_uint64(cpu, "vtcm-base", hms->vtcm_base);
+    qdev_prop_set_uint64(cpu, "vtcm-size-bytes", hms->vtcm_size_bytes);
     object_property_set_link(OBJECT(cpu), "global-regs",
                              OBJECT(hms->glob_regs), &error_fatal);
     object_property_set_link(OBJECT(cpu), "tlb", OBJECT(hms->tlb),

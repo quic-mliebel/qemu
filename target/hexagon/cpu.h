@@ -238,6 +238,24 @@ typedef struct HexagonCPUClass {
 
 #include "cpu_bits.h"
 
+/**
+ * struct ArchCPU - Hexagon CPU state, configuration, and subsystem links
+ * @parent_obj: Generic CPU object
+ * @env: Architectural and packet execution state
+ * @cfg: CPU configuration
+ * @hvx_ctx: Shared HVX contexts that this CPU can use
+ * @hmx_ctx: Shared HMX context
+ * @tlb: Translation lookaside buffer of the subsystem
+ * @boot_addr: Guest address where execution starts
+ * @vtcm_base: Start address of VTCM in the machine address space
+ * @vtcm_size_bytes: Size of VTCM in bytes
+ * @globalregs: Global register device of the subsystem
+ * @htid: Hardware thread identifier
+ * @l2vic: Interrupt controller interface of the subsystem
+ * @hlx: HLX device of the subsystem
+ * @hmx: HMX execution state
+ * @hmx_cfg: HMX configuration
+ */
 struct ArchCPU {
     CPUState parent_obj;
 
@@ -248,6 +266,8 @@ struct ArchCPU {
     HexagonHMXContextState *hmx_ctx;
     HexagonTLBState *tlb;
     uint32_t boot_addr;
+    hwaddr vtcm_base;
+    hwaddr vtcm_size_bytes;
     HexagonGlobalRegState *globalregs;
     uint32_t htid;
     HexL2VicInterface *l2vic;

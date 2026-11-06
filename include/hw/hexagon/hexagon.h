@@ -180,6 +180,23 @@ struct hexagon_machine_config {
 #define TYPE_HEXAGON_COMMON_MACHINE "hexagon-common-machine"
 OBJECT_DECLARE_SIMPLE_TYPE(HexagonCommonMachineState, HEXAGON_COMMON_MACHINE)
 
+/**
+ * struct HexagonCommonMachineState - Shared resources of a subsystem
+ * @parent_obj: Generic machine object
+ * @ram: Main DDR memory
+ * @cfgtable_rom: Configuration table ROM that the guest can read
+ * @cfgtable_data: Configuration table contents in guest byte order
+ * @vtcm: Vector tightly coupled memory (VTCM) region
+ * @vtcm_base: Start address of VTCM in the machine address space
+ * @vtcm_size_bytes: Size of VTCM in bytes
+ * @cluster: CPU cluster
+ * @l2vic: Interrupt controller
+ * @qtimer: Timer device
+ * @glob_regs: Global register device
+ * @tlb: Shared translation lookaside buffer
+ * @hlx: HLX device
+ * @num_hvx_ctx: Number of shared HVX contexts
+ */
 struct HexagonCommonMachineState {
     MachineState parent_obj;
 
@@ -187,6 +204,8 @@ struct HexagonCommonMachineState {
     MemoryRegion cfgtable_rom;
     uint32_t cfgtable_data[HEXAGON_CFGSPACE_ENTRIES];
     MemoryRegion vtcm;
+    hwaddr vtcm_base;
+    hwaddr vtcm_size_bytes;
     DeviceState *cluster;
     DeviceState *l2vic;
     DeviceState *qtimer;
