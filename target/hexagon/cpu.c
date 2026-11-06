@@ -776,6 +776,16 @@ static void set_badva_regs(CPUHexagonState *env, uint32_t VA, int slot,
     }
 }
 
+/**
+ * raise_tlbmiss_exception() - Prepare a TLB miss exception
+ * @cs: CPU that gets the exception
+ * @VA: Guest virtual address that has no translation
+ * @slot: Memory slot of a data access. Not used for an instruction fetch.
+ * @access_type: Instruction fetch, data load, or data store
+ *
+ * A fetch miss on a page other than the page of PC gets the next-page cause.
+ * This does not raise the exception.
+ */
 static void raise_tlbmiss_exception(CPUState *cs, uint32_t VA, int slot,
                                     MMUAccessType access_type)
 {
@@ -786,7 +796,8 @@ static void raise_tlbmiss_exception(CPUState *cs, uint32_t VA, int slot,
     switch (access_type) {
     case MMU_INST_FETCH:
         cs->exception_index = HEX_EVENT_TLB_MISS_X;
-        if ((VA & ~TARGET_PAGE_MASK) == 0) {
+        if ((VA & TARGET_PAGE_MASK) !=
+            (env->gpr[HEX_REG_PC] & TARGET_PAGE_MASK)) {
             env->cause_code = HEX_CAUSE_TLBMISSX_CAUSE_NEXTPAGE;
         } else {
             env->cause_code = HEX_CAUSE_TLBMISSX_CAUSE_NORMAL;
