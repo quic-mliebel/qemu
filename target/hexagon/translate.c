@@ -1674,6 +1674,15 @@ static void hexagon_tr_insn_start(DisasContextBase *dcbase, CPUState *cpu)
     tcg_gen_insn_start(ctx->base.pc_next, 0, 0);
 }
 
+/**
+ * pkt_crosses_page() - Check if the next packet reaches the end of the page
+ * @env: CPU state used to read instructions
+ * @ctx: Translation context for the current block
+ *
+ * This does not read from the next page.
+ *
+ * Return: True if the packet reaches the end of the page or goes past it.
+ */
 static bool pkt_crosses_page(CPUHexagonState *env, DisasContext *ctx)
 {
     target_ulong page_start = ctx->base.pc_first & TARGET_PAGE_MASK;
@@ -1681,6 +1690,11 @@ static bool pkt_crosses_page(CPUHexagonState *env, DisasContext *ctx)
     int nwords;
 
     for (nwords = 0; !found_end && nwords < PACKET_WORDS_MAX; nwords++) {
+        /* A fault during lookahead would discard the entire current block. */
+        if (ctx->base.pc_next + nwords * sizeof(uint32_t) - page_start >=
+            TARGET_PAGE_SIZE) {
+            return true;
+        }
         uint32_t word = translator_ldl_end(env, &ctx->base,
                                            ctx->base.pc_next
                                            + nwords * sizeof(uint32_t),
