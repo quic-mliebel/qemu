@@ -65,6 +65,24 @@ void HELPER(log_mem_address)(CPUHexagonState *env, uint32_t va,
     env->mem_access_store[slot] = store;
 }
 
+void HELPER(probe_packet_mem)(CPUHexagonState *env, uint32_t mmu_idx)
+{
+    uintptr_t ra = GETPC();
+
+    for (int slot = 1; slot >= 0; slot--) {
+        if (env->mem_access_valid & (1U << slot)) {
+            env->mem_slot = slot;
+            if (env->mem_access_store[slot]) {
+                probe_write(env, env->mem_access_va[slot],
+                            env->mem_access_size[slot], mmu_idx, ra);
+            } else {
+                probe_read(env, env->mem_access_va[slot],
+                           env->mem_access_size[slot], mmu_idx, ra);
+            }
+        }
+    }
+}
+
 #endif
 
 #ifdef CONFIG_USER_ONLY
