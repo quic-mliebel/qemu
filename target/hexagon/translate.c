@@ -1407,6 +1407,13 @@ static void check_imprecise_exception(DisasContext *ctx)
 }
 #endif
 
+/**
+ * gen_commit_packet() - Generate code to commit the results of a packet
+ * @ctx: Translation context for the packet
+ *
+ * System register writes take effect after all other results. Thus a
+ * context change does not affect the results of the same packet.
+ */
 static void gen_commit_packet(DisasContext *ctx)
 {
     /*
@@ -1503,7 +1510,6 @@ static void gen_commit_packet(DisasContext *ctx)
     gen_reg_writes(ctx);
 #ifndef CONFIG_USER_ONLY
     gen_greg_writes(ctx);
-    gen_sreg_writes(ctx);
 #endif
     gen_pred_writes(ctx);
     if (ctx->pkt.pkt_has_hvx) {
@@ -1515,6 +1521,10 @@ static void gen_commit_packet(DisasContext *ctx)
     if (ctx->pkt.pkt_has_hmx) {
         gen_commit_hmx(ctx);
     }
+#ifndef CONFIG_USER_ONLY
+    /* Context changes must follow writes to the packet's old context. */
+    gen_sreg_writes(ctx);
+#endif
     update_exec_counters(ctx);
 
     if (ctx->pkt.vhist_insn != NULL) {
