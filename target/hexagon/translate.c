@@ -1466,23 +1466,6 @@ static void check_imprecise_exception(DisasContext *ctx)
  */
 static void gen_commit_packet(DisasContext *ctx)
 {
-    /*
-     * If there is more than one store in a packet, make sure they are all OK
-     * before proceeding with the rest of the packet commit.
-     *
-     * dczeroa has to be the only store operation in the packet, so we go
-     * ahead and process that first.
-     *
-     * When there is an HVX store, there can also be a scalar store in either
-     * slot 0 or slot1, so we create a mask for the helper to indicate what
-     * work to do.
-     *
-     * When there are two scalar stores, we probe the one in slot 0.
-     *
-     * Note that we don't call the probe helper for packets with only one
-     * store.  Therefore, we call process_store_log before anything else
-     * involved in committing the packet.
-     */
     bool has_store_s0 = ctx->pkt.pkt_has_scalar_store_s0;
     bool has_store_s1 =
         (ctx->pkt.pkt_has_scalar_store_s1 && !ctx->s1_store_processed);
@@ -1529,19 +1512,20 @@ static void gen_commit_packet(DisasContext *ctx)
                                                    tcg_constant_tl(mask));
         }
     } else if (has_store_s0 && has_store_s1) {
-        /*
-         * process_store_log will execute the slot 1 store first,
-         * so we only have to probe the store in slot 0
-         */
+        /* Validate both stores, including alignment, before commit. */
         int args = 0;
         args =
-            FIELD_DP32(args, PROBE_PKT_SCALAR_STORE_S0, MMU_IDX, ctx->mem_idx);
+            FIELD_DP32(args, PROBE_PKT_SCALAR_STORES, MMU_IDX, ctx->mem_idx);
         if (slot_is_predicated(&ctx->pkt, 0)) {
             args =
-                FIELD_DP32(args, PROBE_PKT_SCALAR_STORE_S0, IS_PREDICATED, 1);
+                FIELD_DP32(args, PROBE_PKT_SCALAR_STORES, S0_IS_PREDICATED, 1);
+        }
+        if (slot_is_predicated(&ctx->pkt, 1)) {
+            args = FIELD_DP32(args, PROBE_PKT_SCALAR_STORES,
+                              S1_IS_PREDICATED, 1);
         }
         TCGv args_tcgv = tcg_constant_tl(args);
-        gen_helper_probe_pkt_scalar_store_s0(tcg_env, args_tcgv);
+        gen_helper_probe_pkt_scalar_stores(tcg_env, args_tcgv);
     }
 
     if (ctx->hex_def->hex_version >= HEX_VER_V83) {
