@@ -1040,6 +1040,13 @@ static void gen_insn(DisasContext *ctx)
 {
     uint16_t opcode = ctx->insn->opcode;
 
+#ifndef CONFIG_USER_ONLY
+    if (GET_ATTRIB(opcode, A_LOAD) || GET_ATTRIB(opcode, A_STORE)) {
+        tcg_gen_st_i32(tcg_constant_i32(ctx->insn->slot), tcg_env,
+                       offsetof(CPUHexagonState, mem_slot));
+    }
+#endif
+
     if (GET_ATTRIB(opcode, A_RELEASE) ||
         GET_ATTRIB(opcode, A_CVI_SCATTER_RELEASE)) {
         tcg_gen_mb(TCG_MO_ALL | TCG_BAR_STRL);
@@ -1172,6 +1179,14 @@ static bool slot_is_predicated(Packet *pkt, int slot_num)
     g_assert_not_reached();
 }
 
+/**
+ * process_store() - Generate code to write a pending scalar store to memory
+ * @ctx: Translation context for the packet that contains the store
+ * @slot_num: Memory slot of the store
+ *
+ * A store in a cancelled slot has no effect. A slot 1 store that was written
+ * for a mem_noshuf load is not written again.
+ */
 void process_store(DisasContext *ctx, int slot_num)
 {
     bool is_predicated = slot_is_predicated(&ctx->pkt, slot_num);
@@ -1196,6 +1211,10 @@ void process_store(DisasContext *ctx, int slot_num)
     }
     {
         TCGv address = tcg_temp_new();
+#ifndef CONFIG_USER_ONLY
+        tcg_gen_st_i32(tcg_constant_i32(slot_num), tcg_env,
+                       offsetof(CPUHexagonState, mem_slot));
+#endif
         tcg_gen_mov_tl(address, hex_store_addr[slot_num]);
 
         /*
@@ -1242,6 +1261,13 @@ void process_store(DisasContext *ctx, int slot_num)
     if (is_predicated) {
         gen_set_label(label_end);
     }
+#ifndef CONFIG_USER_ONLY
+    /* An early mem_noshuf store is followed by the slot 0 load. */
+    if (ctx->pre_commit) {
+        tcg_gen_st_i32(tcg_constant_i32(ctx->insn->slot), tcg_env,
+                       offsetof(CPUHexagonState, mem_slot));
+    }
+#endif
 }
 
 static void process_store_log(DisasContext *ctx)
