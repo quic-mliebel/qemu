@@ -54,6 +54,81 @@
 #include "hexswi.h"
 #endif
 
+#ifndef CONFIG_USER_ONLY
+/**
+ * log_mem_address() - Record the address of a memory slot for fault reports
+ * @env: CPU state that gets the address
+ * @va: Guest virtual address to report in BADVA
+ * @slot: Memory slot of @va
+ *
+ * This does not change BADVA or SSR.
+ */
+static void log_mem_address(CPUHexagonState *env, uint32_t va, uint32_t slot)
+{
+    assert(slot < 2);
+    env->mem_access_valid |= 1U << slot;
+    env->mem_access_va[slot] = va;
+}
+
+/**
+ * probe_hvx_transaction() - Check if one HVX transaction is permitted
+ * @env: CPU state for the access and the fault report
+ * @address: Vector-aligned guest virtual address of the transaction
+ * @slot: Memory slot to report on a fault
+ * @store: True for a store, false for a load
+ * @mmu_idx: MMU index for the privilege level of the access
+ * @ra: Host return address to restore the guest state on a fault
+ *
+ * If the vector-sized access is not permitted, raise an exception.
+ * This does not read or write memory.
+ */
+static void probe_hvx_transaction(CPUHexagonState *env, uint32_t address,
+                                  uint32_t slot, bool store, int mmu_idx,
+                                  uintptr_t ra)
+{
+    env->mem_slot = slot;
+    if (store) {
+        probe_write(env, address, VECTOR_SIZE_BYTE, mmu_idx, ra);
+    } else {
+        probe_read(env, address, VECTOR_SIZE_BYTE, mmu_idx, ra);
+    }
+}
+
+/**
+ * probe_hvx_mem() - Check if an HVX load or store is permitted
+ * @env: CPU state for the access and the fault report
+ * @va: Guest virtual address of the load or store
+ * @slot: Memory slot of an aligned VMEM access. Not used for VMEMU.
+ * @aligned: Nonzero for an aligned VMEM access, zero for a VMEMU access
+ * @store: Nonzero for a store, zero for a load
+ * @mmu_idx: MMU index for the privilege level of the access
+ *
+ * If the access is not permitted, raise an exception. A VMEMU access reports
+ * its lower part as slot 0 and its upper part as slot 1. A slot 1 fault has
+ * priority. This does not read or write memory.
+ */
+void HELPER(probe_hvx_mem)(CPUHexagonState *env, uint32_t va, uint32_t slot,
+                           uint32_t aligned, uint32_t store, uint32_t mmu_idx)
+{
+    uintptr_t ra = GETPC();
+    uint32_t base = va & ~(VECTOR_SIZE_BYTE - 1);
+
+    if (aligned) {
+        log_mem_address(env, base, slot);
+        probe_hvx_transaction(env, base, slot, store, mmu_idx, ra);
+        return;
+    }
+
+    /* Record both VMEMU addresses before either transaction can fault. */
+    log_mem_address(env, va, 0);
+    log_mem_address(env, va + VECTOR_SIZE_BYTE, 1);
+
+    /* Probe the upper transaction first because slot 1 faults have priority. */
+    probe_hvx_transaction(env, base + VECTOR_SIZE_BYTE, 1, store, mmu_idx, ra);
+    probe_hvx_transaction(env, base, 0, store, mmu_idx, ra);
+}
+#endif
+
 #ifdef CONFIG_USER_ONLY
 /*
  * User mode has no qtimer device backing TIMERLO/TIMERHI, so derive the
@@ -515,12 +590,24 @@ void HELPER(probe_pkt_scalar_stores)(CPUHexagonState *env, int args)
     probe_store(env, 0, mmu_idx, pred[0], ra);
 }
 
+/**
+ * probe_hvx_stores() - Check if the pending HVX stores are permitted
+ * @env: CPU state of the packet
+ * @mmu_idx: MMU index for the privilege level of the stores
+ * @retaddr: Host return address to restore the guest state on a fault
+ *
+ * If a store is not permitted, raise an exception. Bytes that a store mask
+ * disables do not cause a fault. This does not write memory.
+ */
 static void probe_hvx_stores(CPUHexagonState *env, int mmu_idx,
                                     uintptr_t retaddr)
 {
     /* Normal (possibly masked) vector store */
     for (int i = 0; i < VSTORES_MAX; i++) {
         if (env->vstore_pending[i]) {
+#ifndef CONFIG_USER_ONLY
+            env->mem_slot = i;
+#endif
             target_ulong va = env->vstore[i].va;
             int size = env->vstore[i].size;
             for (int j = 0; j < size; j++) {

@@ -792,7 +792,7 @@ static HexagonFaultAddressInfo get_fault_address_info(
         info.valid = env->mem_access_valid | (1U << slot);
         info.slot = slot;
         for (int i = 0; i < 2; i++) {
-            if (i != slot && (env->mem_access_valid & (1U << i))) {
+            if (env->mem_access_valid & (1U << i)) {
                 info.va[i] = env->mem_access_va[i];
             }
         }

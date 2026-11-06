@@ -1660,10 +1660,26 @@ static intptr_t get_result_qreg(DisasContext *ctx, int qnum, TCGv_ptr *base)
     }
 }
 
+/**
+ * gen_vreg_load() - Generate code to load an HVX vector
+ * @ctx: Translation context for the packet that contains the load
+ * @dstbase: TCG pointer to the destination vector storage
+ * @dstoff: Byte offset of the destination from @dstbase
+ * @src: TCG value that contains the guest virtual address of the source.
+ *       At the end, it contains the address after the loaded vector.
+ * @aligned: True for an aligned VMEM load, false for an unaligned VMEMU load
+ *
+ * A fault does not change the destination.
+ */
 static void gen_vreg_load(DisasContext *ctx, TCGv_ptr dstbase,
                           intptr_t dstoff, TCGv src, bool aligned)
 {
     TCGv_i64 tmp = tcg_temp_new_i64();
+#ifndef CONFIG_USER_ONLY
+    gen_helper_probe_hvx_mem(tcg_env, src, tcg_constant_i32(ctx->insn->slot),
+                             tcg_constant_i32(aligned), tcg_constant_i32(0),
+                             tcg_constant_i32(ctx->mem_idx));
+#endif
     if (aligned) {
         tcg_gen_andi_tl(src, src, ~((int32_t)VECTOR_SIZE_BYTE - 1));
     }
@@ -1674,6 +1690,18 @@ static void gen_vreg_load(DisasContext *ctx, TCGv_ptr dstbase,
     }
 }
 
+/**
+ * gen_vreg_store() - Generate code to hold an HVX store until packet commit
+ * @ctx: Translation context for the packet that contains the store
+ * @EA: TCG value that contains the guest virtual address of the destination
+ * @srcbase: TCG pointer to the source vector storage
+ * @srcoff: Byte offset of the source from @srcbase
+ * @slot: Memory slot of the store
+ * @aligned: True for an aligned VMEM store, false for an unaligned VMEMU store
+ *
+ * A fault occurs before the packet commits. A gather store uses the gathered
+ * vector, not @srcbase plus @srcoff.
+ */
 static void gen_vreg_store(DisasContext *ctx, TCGv EA, TCGv_ptr srcbase,
                            intptr_t srcoff, int slot, bool aligned)
 {
@@ -1686,6 +1714,11 @@ static void gen_vreg_store(DisasContext *ctx, TCGv EA, TCGv_ptr srcbase,
         return;
     }
 
+#ifndef CONFIG_USER_ONLY
+    gen_helper_probe_hvx_mem(tcg_env, EA, tcg_constant_i32(slot),
+                             tcg_constant_i32(aligned), tcg_constant_i32(1),
+                             tcg_constant_i32(ctx->mem_idx));
+#endif
     tcg_gen_movi_tl(hex_vstore_pending[slot], 1);
     if (aligned) {
         tcg_gen_andi_tl(hex_vstore_addr[slot], EA,
