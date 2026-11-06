@@ -450,15 +450,27 @@ static void probe_store(CPUHexagonState *env, int slot, int mmu_idx,
     }
 }
 
-/*
- * Called from a mem_noshuf packet to make sure the load doesn't
- * raise an exception
+/**
+ * probe_noshuf_load() - Check a mem_noshuf load before its store is written
+ * @env: CPU state of the packet
+ * @va: Guest virtual address of the slot 0 load
+ * @size: Load size in bytes
+ * @mmu_idx: MMU index for the privilege level of the accesses
+ *
+ * Raise an exception if the slot 1 store or the load is not permitted.
+ * A slot 1 fault has priority. This does not do the load or write the store.
  */
 void HELPER(probe_noshuf_load)(CPUHexagonState *env, target_ulong va,
                                int size, int mmu_idx)
 {
     uintptr_t retaddr = GETPC();
 #ifndef CONFIG_USER_ONLY
+    /* Probe the slot 1 store first so its fault wins over a slot 0 fault. */
+    if (env->mem_access_valid & (1U << 1)) {
+        env->mem_slot = 1;
+        probe_write(env, env->mem_access_va[1],
+                    env->mem_log_stores[1].width, mmu_idx, retaddr);
+    }
     env->mem_slot = 0;
 #endif
     probe_read(env, va, size, mmu_idx, retaddr);
@@ -549,12 +561,29 @@ void HELPER(probe_pkt_scalar_hvx_stores)(CPUHexagonState *env, int mask)
  * If the load is in slot 0 and there is a store in slot1 (that
  * wasn't cancelled), we have to do the store first.
  */
+/**
+ * check_noshuf() - Write the store that a mem_noshuf load must see
+ * @env: CPU state of the packet
+ * @pkt_has_scalar_store_s1: True if the packet has a scalar store in slot 1
+ * @slot: Memory slot of the load
+ * @vaddr: Guest virtual address of the load
+ * @size: Load size in bytes
+ * @ra: Host return address to restore the guest state on a fault
+ *
+ * For a slot 0 load, write the active slot 1 store of the packet. If the
+ * store or the load is not permitted, raise an exception and do not write
+ * the store. This does not do the load.
+ */
 static void check_noshuf(CPUHexagonState *env, bool pkt_has_scalar_store_s1,
                          uint32_t slot, target_ulong vaddr, int size,
                          uintptr_t ra)
 {
     if (slot == 0 && pkt_has_scalar_store_s1 &&
         ((env->slot_cancelled & (1 << 1)) == 0)) {
+#ifndef CONFIG_USER_ONLY
+        probe_store(env, 1, MMU_USER_IDX, false, ra);
+        env->mem_slot = 0;
+#endif
         probe_read(env, vaddr, size, MMU_USER_IDX, ra);
         commit_store(env, 1, ra);
     }
