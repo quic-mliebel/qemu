@@ -54,6 +54,19 @@
 #include "hexswi.h"
 #endif
 
+#ifndef CONFIG_USER_ONLY
+void HELPER(log_mem_address)(CPUHexagonState *env, uint32_t va,
+                             uint32_t slot, uint32_t size, uint32_t store)
+{
+    assert(slot < 2);
+    env->mem_access_valid |= 1U << slot;
+    env->mem_access_va[slot] = va;
+    env->mem_access_size[slot] = size;
+    env->mem_access_store[slot] = store;
+}
+
+#endif
+
 #ifdef CONFIG_USER_ONLY
 /*
  * User mode has no qtimer device backing TIMERLO/TIMERHI, so derive the
