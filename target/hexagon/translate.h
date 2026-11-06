@@ -246,9 +246,22 @@ static inline void ctx_log_reg_write_pair(DisasContext *ctx, int rnum,
     ctx_log_reg_write(ctx, rnum + 1, is_predicated);
 }
 
+/**
+ * ctx_log_reg_read() - Record a register read during packet analysis
+ * @ctx: Translation context for the packet that contains the read
+ * @rnum: Index of the general or control register that is read
+ *
+ * If an earlier instruction in the packet writes @rnum, the read gets the
+ * value from before the packet. A read of C4 also applies to P0 to P3.
+ * This does not read or change guest registers.
+ */
 static inline void ctx_log_reg_read(DisasContext *ctx, int rnum)
 {
-    if (test_bit(rnum, ctx->regs_written)) {
+    if (rnum == HEX_REG_P3_0_ALIASED) {
+        for (int i = 0; i < NUM_PREGS; i++) {
+            ctx_log_pred_read(ctx, i);
+        }
+    } else if (test_bit(rnum, ctx->regs_written)) {
         ctx->read_after_write = true;
     }
 }
