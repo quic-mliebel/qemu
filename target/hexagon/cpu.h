@@ -169,8 +169,6 @@ typedef struct CPUArchState {
     uint32_t mem_slot;
     uint32_t mem_access_valid;
     uint32_t mem_access_va[2];
-    uint32_t mem_access_size[2];
-    uint32_t mem_access_store[2];
 
     uint32_t greg[NUM_GREGS];
 

@@ -23,7 +23,6 @@ DEF_HELPER_2(commit_store, void, env, int)
 DEF_HELPER_3(gather_store, void, env, i32, int)
 DEF_HELPER_1(commit_hvx_stores, void, env)
 #ifndef CONFIG_USER_ONLY
-DEF_HELPER_5(log_mem_address, void, env, i32, i32, i32, i32)
 DEF_HELPER_2(probe_packet_mem, void, env, i32)
 DEF_HELPER_6(probe_hvx_mem, void, env, i32, i32, i32, i32, i32)
 #endif

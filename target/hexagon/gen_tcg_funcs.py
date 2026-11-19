@@ -163,7 +163,7 @@ def gen_memory_address(f, tag, regs, imms):
         ea = ea.replace(f"fREAD_{reg}()", f"hex_gpr[HEX_REG_{reg}]")
     f.write("#ifndef CONFIG_USER_ONLY\n")
     f.write(f"static void address_{tag}(DisasContext *ctx)\n{{\n")
-    f.write("    Insn *insn = ctx->insn;\n")
+    f.write("    Insn *insn G_GNUC_UNUSED = ctx->insn;\n")
     f.write("    TCGv EA = tcg_temp_new();\n")
     for i, (regtype, regid) in enumerate(regs):
         name = f"{regtype}{regid}V"
@@ -185,10 +185,7 @@ def gen_memory_address(f, tag, regs, imms):
         cond = "NE" if pred.group(2) else "EQ"
         f.write(f"    tcg_gen_brcondi_tl(TCG_COND_{cond}, LSB, 0, skip);\n")
     f.write(f"    {ea};\n")
-    store = int("A_STORE" in hex_common.attribdict[tag])
-    f.write(f"    gen_helper_log_mem_address(tcg_env, EA, "
-            f"tcg_constant_i32(insn->slot), tcg_constant_i32({width}), "
-            f"tcg_constant_i32({store}));\n")
+    f.write("    gen_log_mem_address(ctx, EA);\n")
     if pred:
         f.write("    gen_set_label(skip);\n")
     f.write("}\n#endif\n\n")
