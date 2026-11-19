@@ -55,24 +55,6 @@
 #endif
 
 #ifndef CONFIG_USER_ONLY
-void HELPER(probe_packet_mem)(CPUHexagonState *env, uint32_t mmu_idx)
-{
-    uintptr_t ra = GETPC();
-
-    for (int slot = 1; slot >= 0; slot--) {
-        if (env->mem_access_valid & (1U << slot)) {
-            env->mem_slot = slot;
-            if (env->mem_access_store[slot]) {
-                probe_write(env, env->mem_access_va[slot],
-                            env->mem_access_size[slot], mmu_idx, ra);
-            } else {
-                probe_read(env, env->mem_access_va[slot],
-                           env->mem_access_size[slot], mmu_idx, ra);
-            }
-        }
-    }
-}
-
 void HELPER(probe_hvx_mem)(CPUHexagonState *env, uint32_t va, uint32_t slot,
                            uint32_t aligned, uint32_t store, uint32_t mmu_idx)
 {
@@ -509,6 +491,12 @@ void HELPER(probe_noshuf_load)(CPUHexagonState *env, target_ulong va,
 {
     uintptr_t retaddr = GETPC();
 #ifndef CONFIG_USER_ONLY
+    /* The slot 1 store fault must precede the slot 0 load fault. */
+    if (env->mem_access_valid & (1U << 1)) {
+        env->mem_slot = 1;
+        probe_write(env, env->mem_access_va[1],
+                    env->mem_log_stores[1].width, mmu_idx, retaddr);
+    }
     env->mem_slot = 0;
     hexagon_check_alignment(env, va, size, 0, MMU_DATA_LOAD, retaddr);
 #endif
@@ -622,6 +610,10 @@ static void check_noshuf(CPUHexagonState *env, bool pkt_has_scalar_store_s1,
 {
     if (slot == 0 && pkt_has_scalar_store_s1 &&
         ((env->slot_cancelled & (1 << 1)) == 0)) {
+#ifndef CONFIG_USER_ONLY
+        probe_store(env, 1, MMU_USER_IDX, false, ra);
+        env->mem_slot = 0;
+#endif
         probe_read(env, vaddr, size, MMU_USER_IDX, ra);
         commit_store(env, 1, ra);
     }
