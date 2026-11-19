@@ -55,6 +55,13 @@
 #endif
 
 #ifndef CONFIG_USER_ONLY
+static void log_mem_address(CPUHexagonState *env, uint32_t va, uint32_t slot)
+{
+    assert(slot < 2);
+    env->mem_access_valid |= 1U << slot;
+    env->mem_access_va[slot] = va;
+}
+
 void HELPER(probe_hvx_mem)(CPUHexagonState *env, uint32_t va, uint32_t slot,
                            uint32_t aligned, uint32_t store, uint32_t mmu_idx)
 {
@@ -62,12 +69,11 @@ void HELPER(probe_hvx_mem)(CPUHexagonState *env, uint32_t va, uint32_t slot,
     uint32_t base = va & ~(VECTOR_SIZE_BYTE - 1);
 
     if (aligned) {
-        HELPER(log_mem_address)(env, base, slot, VECTOR_SIZE_BYTE, store);
+        log_mem_address(env, base, slot);
     } else {
         /* VMEMU uses both slots; BADVA records the unaligned addresses. */
-        HELPER(log_mem_address)(env, va, 0, VECTOR_SIZE_BYTE, store);
-        HELPER(log_mem_address)(env, va + VECTOR_SIZE_BYTE, 1,
-                                VECTOR_SIZE_BYTE, store);
+        log_mem_address(env, va, 0);
+        log_mem_address(env, va + VECTOR_SIZE_BYTE, 1);
     }
     int first = aligned ? slot : 1;
     int last = aligned ? slot : 0;
