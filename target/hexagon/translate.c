@@ -819,8 +819,6 @@ static void gen_start_packet(DisasContext *ctx)
     memset(ctx->mem_access_width, 0, sizeof(ctx->mem_access_width));
     ctx->mem_access_store = 0;
     ctx->mem_access_predicated = 0;
-    tcg_gen_st_i32(tcg_constant_i32(0), tcg_env,
-                   offsetof(CPUHexagonState, mem_access_valid));
     for (i = 0; i < HEX_SREG_GLB_START; i++) {
         ctx->t_sreg_new_value[i] = NULL;
     }
@@ -1029,6 +1027,9 @@ static void gen_insn(DisasContext *ctx)
     if (GET_ATTRIB(opcode, A_LOAD) || GET_ATTRIB(opcode, A_STORE)) {
         if (!ctx->mem_addresses_generated) {
             Insn *saved = ctx->insn;
+
+            tcg_gen_st_i32(tcg_constant_i32(0), tcg_env,
+                           offsetof(CPUHexagonState, mem_access_valid));
             for (int i = 0; i < ctx->pkt.num_insns; i++) {
                 Insn *in = &ctx->pkt.insn[i];
                 if (opcode_address[in->opcode]) {
