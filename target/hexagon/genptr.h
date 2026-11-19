@@ -25,7 +25,8 @@
 extern const SemanticInsn opcode_genptr[];
 #ifndef CONFIG_USER_ONLY
 extern const SemanticInsn opcode_address[];
-void gen_log_mem_address(DisasContext *ctx, TCGv va);
+void gen_log_mem_address(DisasContext *ctx, TCGv va, unsigned width);
+void gen_packet_alignment_check(DisasContext *ctx);
 #endif
 
 void gen_store32(TCGv vaddr, TCGv src, uint32_t width, uint32_t slot);
