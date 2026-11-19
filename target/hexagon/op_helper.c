@@ -518,16 +518,6 @@ void HELPER(probe_pkt_scalar_stores)(CPUHexagonState *env, int args)
         FIELD_EX32(args, PROBE_PKT_SCALAR_STORES, S1_IS_PREDICATED),
     };
     uintptr_t ra = GETPC();
-#ifndef CONFIG_USER_ONLY
-    /* Do not let an alignment fault occur after either store commits. */
-    for (int slot = 1; slot >= 0; slot--) {
-        if (!pred[slot] || !(env->slot_cancelled & (1U << slot))) {
-            hexagon_check_alignment(env, env->mem_log_stores[slot].va,
-                                    env->mem_log_stores[slot].width, slot,
-                                    MMU_DATA_STORE, ra);
-        }
-    }
-#endif
     probe_store(env, 1, mmu_idx, pred[1], ra);
     probe_store(env, 0, mmu_idx, pred[0], ra);
 }
@@ -619,6 +609,7 @@ static void check_noshuf(CPUHexagonState *env, bool pkt_has_scalar_store_s1,
 #ifndef CONFIG_USER_ONLY
         probe_store(env, 1, MMU_USER_IDX, false, ra);
         env->mem_slot = 0;
+        hexagon_check_alignment(env, vaddr, size, 0, MMU_DATA_LOAD, ra);
 #endif
         probe_read(env, vaddr, size, MMU_USER_IDX, ra);
         commit_store(env, 1, ra);

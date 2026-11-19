@@ -1737,16 +1737,15 @@ static void vec_to_qvec(size_t size, TCGv_ptr dstbase, intptr_t dstoff,
 void gen_log_mem_address(DisasContext *ctx, TCGv va, unsigned width)
 {
     unsigned slot = ctx->insn->slot;
+    unsigned info = width;
     TCGv valid = tcg_temp_new();
 
     tcg_debug_assert(slot < 2);
-    ctx->mem_access_width[slot] = width;
     if (GET_ATTRIB(ctx->insn->opcode, A_STORE)) {
-        ctx->mem_access_store |= 1U << slot;
+        info |= HEX_SCALAR_MEM_STORE;
     }
-    if (GET_ATTRIB(ctx->insn->opcode, A_CONDEXEC)) {
-        ctx->mem_access_predicated |= 1U << slot;
-    }
+    ctx->scalar_mem_info |= info << (slot * HEX_SCALAR_MEM_ACCESS_BITS);
+    tcg_set_insn_start_param(ctx->base.insn_start, 1, ctx->scalar_mem_info);
     tcg_gen_st_i32(va, tcg_env,
                    offsetof(CPUHexagonState, mem_access_va[slot]));
     tcg_gen_ld_i32(valid, tcg_env,
@@ -1756,64 +1755,6 @@ void gen_log_mem_address(DisasContext *ctx, TCGv va, unsigned width)
                    offsetof(CPUHexagonState, mem_access_valid));
 }
 
-void gen_packet_alignment_check(DisasContext *ctx)
-{
-    TCGv valid;
-
-    /* A single access gets its alignment check from the normal memory op. */
-    if (!ctx->mem_access_width[0] || !ctx->mem_access_width[1]) {
-        return;
-    }
-    valid = tcg_temp_new();
-    tcg_gen_ld_i32(valid, tcg_env,
-                   offsetof(CPUHexagonState, mem_access_valid));
-
-    /* Check both alignments before either slot can raise a TLB fault. */
-    for (int slot = 1; slot >= 0; slot--) {
-        unsigned width = ctx->mem_access_width[slot];
-        TCGLabel *aligned;
-        TCGv va, tmp;
-
-        if (width == 1) {
-            continue;
-        }
-        aligned = gen_new_label();
-        va = tcg_temp_new();
-        tmp = tcg_temp_new();
-        if (ctx->mem_access_predicated & (1U << slot)) {
-            tcg_gen_andi_i32(tmp, valid, 1U << slot);
-            tcg_gen_brcondi_i32(TCG_COND_EQ, tmp, 0, aligned);
-        }
-        tcg_gen_ld_i32(va, tcg_env,
-                       offsetof(CPUHexagonState, mem_access_va[slot]));
-        tcg_gen_andi_i32(tmp, va, width - 1);
-        tcg_gen_brcondi_i32(TCG_COND_EQ, tmp, 0, aligned);
-
-        /* Fault path: retain inactive BADVA registers and report both EAs. */
-        for (int i = 0; i < 2; i++) {
-            TCGLabel *inactive = gen_new_label();
-
-            if (ctx->mem_access_predicated & (1U << i)) {
-                tcg_gen_andi_i32(tmp, valid, 1U << i);
-                tcg_gen_brcondi_i32(TCG_COND_EQ, tmp, 0, inactive);
-            }
-            tcg_gen_ld_i32(hex_t_sreg[HEX_SREG_BADVA0 + i], tcg_env,
-                           offsetof(CPUHexagonState, mem_access_va[i]));
-            gen_set_label(inactive);
-        }
-        tcg_gen_mov_i32(hex_t_sreg[HEX_SREG_BADVA], va);
-        tcg_gen_deposit_i32(hex_t_sreg[HEX_SREG_SSR],
-                            hex_t_sreg[HEX_SREG_SSR], valid,
-                            reg_field_info[SSR_V0].offset, 2);
-        tcg_gen_deposit_i32(hex_t_sreg[HEX_SREG_SSR],
-                            hex_t_sreg[HEX_SREG_SSR], tcg_constant_i32(slot),
-                            reg_field_info[SSR_BVS].offset, 1);
-        gen_precise_exception(ctx->mem_access_store & (1U << slot) ?
-                              HEX_CAUSE_MISALIGNED_STORE :
-                              HEX_CAUSE_MISALIGNED_LOAD, ctx->pkt.pc);
-        gen_set_label(aligned);
-    }
-}
 #endif
 
 void probe_noshuf_load(TCGv va, int s, int mi)

@@ -816,9 +816,7 @@ static void gen_start_packet(DisasContext *ctx)
     bitmap_zero(ctx->pregs_written, NUM_PREGS);
     ctx->mem_addresses_generated = false;
 #ifndef CONFIG_USER_ONLY
-    memset(ctx->mem_access_width, 0, sizeof(ctx->mem_access_width));
-    ctx->mem_access_store = 0;
-    ctx->mem_access_predicated = 0;
+    ctx->scalar_mem_info = 0;
     for (i = 0; i < HEX_SREG_GLB_START; i++) {
         ctx->t_sreg_new_value[i] = NULL;
     }
@@ -1038,7 +1036,6 @@ static void gen_insn(DisasContext *ctx)
                 }
             }
             ctx->insn = saved;
-            gen_packet_alignment_check(ctx);
             ctx->mem_addresses_generated = true;
         }
         tcg_gen_st_i32(tcg_constant_i32(ctx->insn->slot), tcg_env,

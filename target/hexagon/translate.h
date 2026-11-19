@@ -46,9 +46,7 @@ typedef struct DisasContext {
     bool implicit_usr_write;
 #ifndef CONFIG_USER_ONLY
     uint32_t cpu_mode;
-    uint8_t mem_access_width[2];
-    uint8_t mem_access_store;
-    uint8_t mem_access_predicated;
+    uint32_t scalar_mem_info;
     bool ss_active;
     int greg_log[GREG_WRITES_MAX];
     int greg_log_idx;
